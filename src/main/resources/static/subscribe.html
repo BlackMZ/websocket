@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Spring Boot+WebSocket+发布订阅</title>
+</head>
+<body>
+<div>
+    <div>
+        <button id="connect" onclick="connect();">连接</button>
+        <button id="disconnect" disabled="disabled" onclick="disconnect();">断开连接</button>
+    </div>
+    <div id="container" style="display: none;">
+        <div>
+            <label>输入消息</label><input type="text" id="sendAll-msg" />
+            <button id="sendAll" onclick="sendAll();">发送给所有人</button>
+        </div>
+        <div>
+            <label>输入消息</label><input type="text" id="sendTopic-msg" />
+            <button id="sendTopic" onclick="sendTopic();">广播给订阅主题的所有人</button>
+        </div>
+        <div>
+            <label>输入消息</label><input type="text" id="sendToUsers-msg" />
+            <button id="sendToUsers" onclick="sendToUsers();">发送给用户</button>
+        </div>
+        <div>
+            <label>输入消息</label><input type="text" id="transaction-msg" />
+            <button id="transaction" onclick="transaction();">发送给所有人（事务）</button>
+        </div>
+        <p id="response"></p>
+        <p id="response1"></p>
+    </div>
+</div>
+<script src="https://cdn.bootcss.com/sockjs-client/1.3.0/sockjs.min.js"></script>
+<script src="https://cdn.bootcss.com/stomp.js/2.3.3/stomp.min.js"></script>
+<script src="https://cdn.bootcss.com/jquery/3.4.1/jquery.min.js"></script>
+<script>
+    /**
+     * https://blog.csdn.net/jqsad/article/details/77745379
+     * https://www.jianshu.com/p/9b63cf886e86
+     */
+    var userId = 'd892bf12bf7d11e793b69c5c8e6f60fb';
+    // 工单sop id
+    var orderSopId = '20190810-sopId-001';
+    var stompClient = null;
+
+    /**
+     * 建立连接并订阅主题
+     */
+    function connect() {
+        // 使用SockJS协议建立连接对象（还未发起连接），与后台注册的endpoint一致。
+        var socket = new SockJS('/ws/websocket/connect');
+        // 获取STOMP子协议的客户端对象
+        stompClient = Stomp.over(socket);
+        heartbeat();
+        // 连接服务端
+        stompClient.connect({"authorization":"eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI0ZjcyMmNiOS04NmZmLTQ5OWQtODNlZi1jNjkxZDA0NDExMDQiLCJpYXQiOjE1NjE1MTU5MTAsImlz" +
+                "cyI6Ind3dy5jbG91ZGtlZXBlci5jb20iLCJzdWIiOiJzZXJ2aWNlQGNsb3Vka2VlcGVyLmNuIn0.k5SMDb3hymBFs-SbRIi2SncGL4jfNxB5BuaJOrOqwnA"}
+                , function(frame) {
+                    subscribe();
+                    setConnected(true);
+        },function(error) {
+            console.error('连接失败【' + error + '】');
+        });
+
+        //debugInfo();
+    }
+
+    var allSubscription;
+    var materialIssuingTaskSubscription;
+    var userSubscription;
+    /**
+     * 订阅
+     */
+    function subscribe(){
+        //订阅，与@SendTo中的地址对应。
+        allSubscription  = stompClient.subscribe('/app/all', function(respnose){
+            // showResponse(JSON.parse(respnose.body).responseMessage);
+        }, {"token": "token in header"});
+
+
+        // 订阅某个orderSopId的发料任务topic
+        materialIssuingTaskSubscription = stompClient.subscribe('/app/pic', function(respnose){
+            // console.log("userSub：" + respnose);
+            // showResponse(JSON.parse(respnose.body).responseMessage);
+        }, {"token": "token in header"});
+
+        // 订阅，接收一对一的推送消息,其中userId由服务端传递过来,用于表示唯一的用户,通过此值将消息精确推送给一个用户
+        userSubscription = stompClient.subscribe('/user/' + userId + '/stationLetter', function(respnose){
+            // console.log("userSub：" + respnose);
+            // showResponse1(JSON.parse(respnose.body).responseMessage);
+        }, {"token": "token in header"});
+    }
+
+    /**
+     * 心跳机制，防止长时间不通信断开连接
+     */
+    function heartbeat(){
+        stompClient.heartbeat.outgoing = 10000;// 默认10000。客户端发送心跳给服务器的间隔，0表示不发送；
+        stompClient.heartbeat.incoming = 10000;// 默认10000。客户端接收服务器心跳的间隔，0表示不接收。
+    }
+
+    /**
+     * 按钮的启/禁用、内容的显示/隐藏
+     * @param connected 是否连接
+     */
+    function setConnected(connected) {
+        document.getElementById('connect').disabled = connected;
+        document.getElementById('disconnect').disabled = !connected;
+        document.getElementById('container').style.display = connected ? 'block' : 'none';
+        $('#response').html();
+    }
+
+    /**
+     * Debug 信息
+     * STOMP 客户端默认将传输过程中的所有 debug 信息以 console.log() 形式输出到客户端浏览器中
+     * 可以关闭控制台调试数据：设置stompClient.debug = null;
+     * 可通过以下方式输出到 DOM 中
+     */
+    function debugInfo(){
+        stompClient.debug = function(info) {
+            $("body").append(info + "\n");
+        };
+    }
+
+    /**
+     * 断开连接
+     */
+    function disconnect() {
+        unsubscribe();
+
+        if (stompClient != null) {
+            stompClient.disconnect(function () {
+                console.log("disconnected");
+            });
+        }
+        setConnected(false);
+    }
+
+    /**
+     * 取消订阅
+     */
+    function unsubscribe(){
+        allSubscription.unsubscribe();
+        materialIssuingTaskSubscription.unsubscribe();
+        userSubscription.unsubscribe();
+    }
+
+    /**
+     * 发送给所有人
+     */
+    function sendAll() {
+        var msg = $('#sendAll-msg').val();
+        // 向地址为"/sendAll"的服务器地址发起请求，与@MessageMapping里的地址对应。
+        // 由于配置了客户端给服务端发消息的地址前缀（registry.setApplicationDestinationPrefixes("/message/")），所以需要添加前缀/message/
+        stompClient.send("/message/sendAll", {"token": "token in header"}, JSON.stringify({ 'msg': msg }));
+    }
+
+    /**
+     * 广播给订阅主题的所有人
+     */
+    function sendTopic() {
+        var msg = $('#sendTopic-msg').val();
+        stompClient.send("/message/sendTopic", {"token": "token in header"}, JSON.stringify({ 'msg': msg }));
+    }
+
+    /**
+     * 发送给指定用户
+     */
+    function sendToUsers() {
+        var msg = $('#sendToUsers-msg').val();
+        //通过stompClient.send（）向地址为"/sendToUsers"的服务器地址发起请求，与@MessageMapping里的地址对应。因为我们配置了registry.setApplicationDestinationPrefixes(Constant.WEBSOCKETPATHPERFIX);所以需要增加前缀/ws-push/
+        stompClient.send("/message/sendToUsers", {"token": "token in header"}, JSON.stringify({ 'msg': msg }));
+    }
+
+    /**
+     * 事务支持
+     */
+    function transaction(){
+        // 开启事务
+        var tx = stompClient.begin();
+        // 最关键的是要在 headers中加入事务 id，若没有添加，则会直接发送消息，不会以事务进行处理
+        stompClient.send("/message/sendAll", {transaction: tx.id}, JSON.stringify({ 'msg': "message in a transaction" }));
+        // 提交事务
+        tx.commit();
+        // 取消事务
+        // tx.abort();
+    }
+
+
+
+    function showResponse(message) {
+        $("#response").html(message);
+    }
+    function showResponse1(message) {
+        $("#response1").html(message);
+    }
+</script>
+</body>
+</html>
